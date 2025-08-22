@@ -1,13 +1,13 @@
 # Input
-filelist_path: "/path/to/filelist-latest.tsv"
+filelist_path: "/scratch/dmk333_new/known_microbe_hashes/AllTheBacteria/data/latest.tsv"
 s3_region: "eu-west-2"
 seed_limit: null   # for smoke tests, set e.g., 50
 
 # Paths
-output_root: "/scratch/atb/sketches"
+output_root: "/scratch/dmk333_new/known_microbe_hashes/AllTheBacteria/data"
 tmp_root: "/scratch/atb/tmp"
-state_db: "/scratch/atb/state/atb_sketcher.sqlite"
-log_path: "/scratch/atb/logs/atb_sketcher.log"
+state_db: "/scratch/dmk333_new/known_microbe_hashes/AllTheBacteria/data/state/atb_sketcher.sqlite"
+log_path: "/scratch/dmk333_new/known_microbe_hashes/AllTheBacteria/data/logs/atb_sketcher.log"
 
 # Sharding (hash-based)
 n_shards: 4096
@@ -16,7 +16,7 @@ n_shards: 4096
 max_concurrent_downloads: 48
 max_total_workers: 120
 sourmash_params: "k=15,k=31,k=33,scaled=1000,noabund"
-sourmash_threads: 96  # exported via RAYON_NUM_THREADS
+sourmash_threads: 1  # exported via RAYON_NUM_THREADS
 request_timeout_seconds: 7200
 max_retries: 8
 rate_limit_bytes_per_sec: null  # e.g., 8000000000 for ~8 GB/s cap
