@@ -1,0 +1,14 @@
+[Unit]
+Description=ATB sourmash sketcher
+After=network.target
+
+[Service]
+Type=simple
+User=%i
+WorkingDirectory=/opt/atb_sketcher
+ExecStart=/usr/bin/python -m atb_sketcher --config /opt/atb_sketcher/config.yaml
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
