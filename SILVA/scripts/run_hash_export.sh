@@ -3,7 +3,7 @@ ATBScriptsLoc=/scratch/dmk333_new/known_microbe_hashes/AllTheBacteria/scripts
 cmd=(
     /usr/bin/time -v python "${ATBScriptsLoc}/atb_hash_export.py"
     --input-root "../data"
-    --out-root "../data"
+    --out-root "../data/parquet_dumps"
     --glob "../data/*.sig.zip"
     --mod 521
     --workers 4
