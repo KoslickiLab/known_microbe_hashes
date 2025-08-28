@@ -47,6 +47,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List, Optional, Sequence, Tuple
+import errno
 
 # ---------
 # Defaults
@@ -106,8 +107,23 @@ def find_fasta_files(root: Path, *, limit: Optional[int]=None) -> List[Path]:
                 break
     return sorted(files)
 
+def move_into_place(src: Path, dst: Path) -> None:
+    """Move src -> dst. Try atomic rename; fall back to cross-FS move."""
+    ensure_dir(dst.parent)
+    try:
+        os.replace(src, dst)  # atomic if same filesystem
+    except OSError as e:
+        if getattr(e, "errno", None) == errno.EXDEV:
+            # cross-filesystem; do a copy+rename
+            tmp_dst = dst.with_suffix(dst.suffix + ".partial")
+            shutil.copy2(src, tmp_dst)
+            os.replace(tmp_dst, dst)
+            os.unlink(src)
+        else:
+            raise
 
-def run_sourmash(in_path: Path, out_sig: Path, params: str, *, sourmash_bin: str, threads: int, verbose: bool) -> Tuple[int, str]:
+
+def run_sourmash(in_path: Path, out_sig_zip: Path, params: str, *, sourmash_bin: str, threads: int, verbose: bool) -> Tuple[int, str]:
     """
     Execute 'sourmash sketch dna -p <params> -o <out_sig> <in_path>'
     Returns (returncode, combined_stdout_stderr).
@@ -118,7 +134,7 @@ def run_sourmash(in_path: Path, out_sig: Path, params: str, *, sourmash_bin: str
     cmd = [
         sourmash_bin, "sketch", "dna",
         "-p", params,
-        "-o", str(out_sig),
+        "-o", str(out_sig_zip),
         str(in_path),
     ]
     debug(" ".join(cmd), verbose=verbose)
@@ -141,11 +157,14 @@ def process_one(task: Task) -> Tuple[str, bool, Optional[str]]:
 
         ensure_dir(task.tmp_dir)
         with tempfile.TemporaryDirectory(prefix="sm_", dir=str(task.tmp_dir)) as td:
-            tmp_sig = Path(td) / (src.name + ".sig.zip")
-            rc, out = run_sourmash(src, tmp_sig, task.params, sourmash_bin=task.sourmash_bin, threads=task.threads, verbose=task.verbose)
-            if rc != 0 or not tmp_sig.exists():
+            tmp_sig_zip = Path(td) / (src.name + ".sig.zip")
+            rc, out = run_sourmash(src, tmp_sig_zip, task.params, sourmash_bin=task.sourmash_bin, threads=task.threads, verbose=task.verbose)
+            if rc != 0 or not tmp_sig_zip.exists():
                 # propagate sourmash error output to caller
                 return (str(dst_zip), False, f"sourmash failed (rc={rc}). Output:\n{out}")
+
+            # move into place
+            move_into_place(tmp_sig_zip, dst_zip)
 
         return (str(dst_zip), False, None)
     except Exception as e:
