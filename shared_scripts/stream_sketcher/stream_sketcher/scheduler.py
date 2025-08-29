@@ -4,6 +4,7 @@ import os
 import aiohttp
 import signal
 import logging
+import contextlib
 from .utils import LOG, build_logger, shard_subdir_for, RateLimiter
 from .db import DB
 from .crawler import crawl
@@ -36,6 +37,8 @@ class Sketcher:
             else:
                 self.db.upsert_file(subdir, filename, url, size, mtime)
             count += 1
+            if count % 1000 == 0:
+                LOG.info("Discovered %d files so far", count)
             if limit and count >= int(limit):
                 LOG.info("Reached smoke test limit of %s files", limit)
                 break
@@ -76,6 +79,7 @@ class Sketcher:
             local_out = os.path.join(out_root, rel_dir, filename + ".sig.zip")
 
             if os.path.exists(local_out):
+                LOG.debug("Skipping existing output %s", local_out)
                 self.db.mark_status(file_id, "DONE", out_path=local_out)
                 continue
 
@@ -83,12 +87,15 @@ class Sketcher:
             while tries <= retry_max and not self.stop_flag:
                 try:
                     async with net_sem:
+                        LOG.debug("Downloading %s", url)
                         await download_file(session, url, local_tmp, rate, timeout=timeout)
                     self.db.mark_status(file_id, "SKETCHING")
+                    LOG.debug("Sketching %s", local_tmp)
                     rc, out = await run_sourmash(local_tmp, local_out, params, rayon_threads, log=LOG)
                     if rc != 0:
                         raise RuntimeError(f"sourmash failed rc={rc}: {out[:500]}")
                     self.db.mark_status(file_id, "DONE", out_path=local_out)
+                    LOG.info("Finished %s", url)
                     try:
                         os.remove(local_tmp)
                     except FileNotFoundError:
@@ -96,6 +103,7 @@ class Sketcher:
                     break
                 except Exception as e:
                     tries += 1
+                    LOG.exception("Error processing %s (attempt %d/%d)", url, tries, retry_max)
                     self.db.mark_status(file_id, "ERROR", error=str(e), inc_tries=True)
                     backoff = min(300, (2 ** tries))
                     await asyncio.sleep(backoff)
@@ -104,6 +112,8 @@ class Sketcher:
                             os.remove(local_tmp)
                     except Exception:
                         pass
+            else:
+                LOG.error("Exhausted retries for %s", url)
 
     async def run(self):
         # ensure dirs exist
@@ -138,6 +148,7 @@ class Sketcher:
             # Log worker crashes immediately
             for w in workers:
                 w.add_done_callback(lambda t: LOG.exception("Worker crashed: %r", t.exception()) if t.exception() else None)
+            monitor_task = asyncio.create_task(self._monitor(workers))
 
             loop = asyncio.get_running_loop()
             for sig in (signal.SIGINT, signal.SIGTERM):
@@ -155,10 +166,23 @@ class Sketcher:
                 await asyncio.sleep(10)
 
             await asyncio.gather(*workers, return_exceptions=True)
+            monitor_task.cancel()
+            with contextlib.suppress(Exception):
+                await monitor_task
 
     def _request_stop(self):
         LOG.warning("Stop requested; will finish current tasks then exit.")
         self.stop_flag = True
+
+    async def _monitor(self, workers):
+        while not self.stop_flag:
+            st = self.db.stats()
+            alive = sum(not w.done() for w in workers)
+            LOG.info("Monitor: alive_workers=%d stats=%s", alive, st.get("by_status"))
+            for w in workers:
+                if w.done() and w.exception():
+                    LOG.error("Worker died: %r", w.exception())
+            await asyncio.sleep(30)
 
 def load_config(path: str) -> dict:
     import yaml, os

@@ -1,7 +1,9 @@
 import asyncio
 import aiohttp
 import re
-from typing import List, Optional, AsyncGenerator, Tuple
+import posixpath
+from urllib.parse import urljoin
+from typing import List, Optional, AsyncGenerator, Tuple, Set
 from .utils import LOG, is_target_file
 
 LISTING_HREF_RE = re.compile(r'href="([^"]+)"', re.IGNORECASE)
@@ -33,33 +35,38 @@ async def crawl(
 ) -> AsyncGenerator[Tuple[str, str, str, Optional[int], Optional[str]], None]:
     """Generic recursive crawler for FTP directory listings."""
 
-    base_url = base_url.rstrip("/")
+    base_url = base_url.rstrip("/") + "/"
     conn = aiohttp.TCPConnector(limit_per_host=max_concurrency, limit=max_concurrency)
     async with aiohttp.ClientSession(connector=conn, headers=headers) as session:
         dir_queue: asyncio.Queue[Tuple[str, int]] = asyncio.Queue()
         file_queue: asyncio.Queue[Optional[Tuple[str, str, str, Optional[int], Optional[str]]]] = asyncio.Queue()
+        visited: Set[str] = set()
 
         await dir_queue.put(("", 0))
 
         async def dir_worker():
             while True:
                 rel_dir, depth = await dir_queue.get()
-                url = f"{base_url}/" + (rel_dir + "/" if rel_dir else "")
+                url = urljoin(base_url, rel_dir + "/")
                 LOG.debug("Listing %s", url)
                 html = await fetch_text(session, url)
                 if html:
                     hrefs = parse_listing_for_hrefs(html)
                     for h in hrefs:
-                        if h in ("../", "./"):
+                        h = h.strip().split("?")[0]
+                        if not h or h in ("../", "./") or h.startswith("/") or "://" in h:
                             continue
                         if h.endswith("/"):
                             if max_depth is None or depth < max_depth:
-                                child_rel = f"{rel_dir}/{h.rstrip('/')}" if rel_dir else h.rstrip('/')
+                                child_rel = posixpath.normpath(posixpath.join(rel_dir, h))
+                                if child_rel == "." or child_rel in visited:
+                                    continue
+                                visited.add(child_rel)
                                 LOG.debug("Queueing subdir %s", child_rel)
                                 await dir_queue.put((child_rel, depth + 1))
                         else:
                             if is_target_file(h, include_re, exclude_re):
-                                file_url = f"{url}{h}"
+                                file_url = urljoin(url, h)
                                 LOG.debug("Found file %s", file_url)
                                 await file_queue.put((rel_dir, h, file_url, None, None))
                 dir_queue.task_done()
