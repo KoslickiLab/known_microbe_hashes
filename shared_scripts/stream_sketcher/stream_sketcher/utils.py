@@ -44,12 +44,12 @@ def shard_subdir_for(filename: str) -> str:
 
     Historically the code used the ``wgs.`` prefix to determine a shard.  To
     make this tool usable for arbitrary directory structures we simply take the
-    first three characters of the basename.  This provides a reasonably even
+    first 7 characters of the basename.  This provides a reasonably even
     distribution while remaining deterministic.  Callers may override this
     function if they require different sharding behaviour.
     """
     b = os.path.basename(filename)
-    prefix = b[:3]
+    prefix = b[:7]
     return prefix if prefix else "misc"
 
 class RateLimiter:
