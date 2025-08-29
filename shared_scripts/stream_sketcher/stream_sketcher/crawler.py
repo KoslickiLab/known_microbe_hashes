@@ -29,11 +29,14 @@ def partition_dirs_and_files(hrefs: List[str]) -> Tuple[List[str], List[str]]:
     for h in hrefs:
         if h in ("../", "./"):
             continue
+        if h.startswith('/') or h.startswith('http'):
+            # absolute links would cause us to re-crawl from the root
+            continue
         if h.endswith('/'):
             subdirs.append(h.rstrip('/'))
         else:
             files.append(h)
-    return subdirs, files
+        return subdirs, files
 
 async def crawl_ftp(base_url: str,
                     include_re: str,
