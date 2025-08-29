@@ -1,6 +1,6 @@
 
 base_url: "https://ftp.ncbi.nlm.nih.gov/genomes/all"
-output_root: "/scratch/genbak_genomes_all/genomes_all_sketches"
+output_root: "/scratch/genbank_genomes_all/genomes_all_sketches"
 tmp_root: "/scratch/genbank_genomes_all/genomes_all_tmp"
 state_db: "/scratch/genbank_genomes_all/_state/sketcher.sqlite"
 log_path: "/scratch/genbank_genomes_all/logs/sketcher.log"
