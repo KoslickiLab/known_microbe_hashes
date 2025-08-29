@@ -7,10 +7,10 @@ import time
 import logging
 from typing import Optional
 
-LOG = logging.getLogger("wgs_sketcher")
-
-INCLUDE_RE_DEFAULT = r"^wgs\.[A-Z0-9]+(?:\.\d+)?\.fsa_nt\.gz$"
-EXCLUDE_RE_DEFAULT = r"\.(?:gbff|faa|fsa_aa|faa_aa|aa)\.gz$"
+# Use a generic logger name so the package is not tied to the original WGS use
+# case.  Downstream callers can still configure logging however they like, but
+# internally we refer to this as ``stream_sketcher``.
+LOG = logging.getLogger("stream_sketcher")
 
 def build_logger(log_path: Optional[str]=None, level: int=logging.INFO):
     LOG.setLevel(level)
@@ -24,21 +24,33 @@ def build_logger(log_path: Optional[str]=None, level: int=logging.INFO):
         fh.setFormatter(fmt)
         LOG.addHandler(fh)
 
-def is_target_file(filename: str, include_re: str=INCLUDE_RE_DEFAULT) -> bool:
-    return re.match(include_re, os.path.basename(filename)) is not None
+def is_target_file(filename: str,
+                   include_re: str,
+                   exclude_re: Optional[str] = None) -> bool:
+    """Return ``True`` if ``filename`` matches ``include_re`` and does not
+    match ``exclude_re`` (if provided).
 
-def shard_subdir_for(filename: str) -> str:
-    """Choose an output shard directory for a given WGS file.
-    Mirrors upstream: use first 3 letters after 'wgs.' as subdir.
+    Both regular expressions are expected to be strings as supplied in the
+    configuration file.  ``include_re`` is required so callers must be explicit
+    about what files they are interested in.
     """
     b = os.path.basename(filename)
-    if b.startswith("wgs."):
-        rest = b[4:]
-        parts = rest.split(".")
-        if parts:
-            prefix = parts[0][:3]
-            return prefix if prefix else "misc"
-    return "misc"
+    if exclude_re and re.match(exclude_re, b):
+        return False
+    return re.match(include_re, b) is not None
+
+def shard_subdir_for(filename: str) -> str:
+    """Choose a shard directory for a given file.
+
+    Historically the code used the ``wgs.`` prefix to determine a shard.  To
+    make this tool usable for arbitrary directory structures we simply take the
+    first three characters of the basename.  This provides a reasonably even
+    distribution while remaining deterministic.  Callers may override this
+    function if they require different sharding behaviour.
+    """
+    b = os.path.basename(filename)
+    prefix = b[:3]
+    return prefix if prefix else "misc"
 
 class RateLimiter:
     """Token-bucket style rate limiter (bytes per second)."""

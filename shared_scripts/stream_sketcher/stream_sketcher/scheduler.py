@@ -3,9 +3,9 @@ import asyncio
 import os
 import aiohttp
 import signal
-from .utils import LOG, build_logger, shard_subdir_for, INCLUDE_RE_DEFAULT, RateLimiter
+from .utils import LOG, build_logger, shard_subdir_for, RateLimiter
 from .db import DB
-from .crawler import crawl_wgs
+from .crawler import crawl_ftp
 from .worker import download_file, run_sourmash
 
 DEFAULT_PARAMS = "k=15,k=31,k=33,scaled=1000,noabund"
@@ -19,12 +19,22 @@ class Sketcher:
 
     async def crawl_and_enqueue(self):
         base_url = self.cfg["base_url"].rstrip("/")
-        include_re = self.cfg.get("include_regex", INCLUDE_RE_DEFAULT)
+        include_re = self.cfg["include_regex"]
+        exclude_re = self.cfg.get("exclude_regex")
         crawl_conc = int(self.cfg.get("max_crawl_concurrency", 4))
-        headers = {"User-Agent": self.cfg.get("user_agent", "wgs-sketcher/1.0")}
-        async for subdir, filename, url, size, mtime in crawl_wgs(base_url, include_re, crawl_conc, headers=headers):
-            self.db.upsert_file(subdir, filename, url, size, mtime)
-        LOG.info("Crawl finished.")
+        max_depth = self.cfg.get("max_depth")
+        headers = {"User-Agent": self.cfg.get("user_agent", "stream-sketcher/1.0")}
+        limit = self.cfg.get("smoke_test_limit")
+        count = 0
+        async for subdir, filename, url, size, mtime in crawl_ftp(base_url, include_re, exclude_re, max_depth, crawl_conc, headers=headers):
+            if self.cfg.get("dry_run"):
+                LOG.info("[dry-run] %s/%s", subdir, filename)
+            else:
+                self.db.upsert_file(subdir, filename, url, size, mtime)
+            count += 1
+            if limit and count >= limit:
+                break
+        LOG.info("Crawl finished. Found %d matching files.", count)
 
     async def worker(self, session: aiohttp.ClientSession, net_sem: asyncio.Semaphore, rate: RateLimiter):
         params = self.cfg.get("sourmash_params", DEFAULT_PARAMS)
@@ -111,8 +121,8 @@ class Sketcher:
         conn = aiohttp.TCPConnector(limit_per_host=max_dl, limit=max_dl)
         timeout = aiohttp.ClientTimeout(total=None, sock_connect=120, sock_read=3600)
 
-        # NEW: user agent for NCBI courtesy
-        headers = {"User-Agent": self.cfg.get("user_agent", "wgs-sketcher/1.0")}
+        # User agent for NCBI courtesy
+        headers = {"User-Agent": self.cfg.get("user_agent", "stream-sketcher/1.0")}
 
         async with aiohttp.ClientSession(connector=conn, timeout=timeout, headers=headers) as session:
             total_workers = int(self.cfg.get("max_total_workers", 96))
@@ -126,15 +136,21 @@ class Sketcher:
                 loop.add_signal_handler(sig, self._request_stop)
 
             await crawl_task
-            LOG.info("Crawler finished; continuing until queue is exhausted...")
-
-            while True:
-                st = self.db.stats()
-                pending = st["by_status"].get("PENDING", 0) + st["by_status"].get("ERROR", 0) + st["by_status"].get("DOWNLOADING", 0) + st["by_status"].get("SKETCHING", 0)
-                if pending == 0:
-                    self.stop_flag = True
-                    break
-                await asyncio.sleep(10)
+            if self.cfg.get("dry_run"):
+                # In a dry run we simply exit after crawling.
+                self.stop_flag = True
+            else:
+                LOG.info("Crawler finished; continuing until queue is exhausted...")
+                while True:
+                    st = self.db.stats()
+                    pending = (st["by_status"].get("PENDING", 0) +
+                               st["by_status"].get("ERROR", 0) +
+                               st["by_status"].get("DOWNLOADING", 0) +
+                               st["by_status"].get("SKETCHING", 0))
+                    if pending == 0:
+                        self.stop_flag = True
+                        break
+                    await asyncio.sleep(10)
 
             await asyncio.gather(*workers, return_exceptions=True)
 
@@ -147,8 +163,10 @@ def load_config(path: str) -> dict:
     with open(path, "r") as f:
         cfg = yaml.safe_load(f)
     cfg.setdefault("base_url", "https://ftp.ncbi.nlm.nih.gov/genbank/wgs")
-    cfg.setdefault("include_regex", r"^wgs\.[A-Z0-9]+(?:\.\d+)?\.fsa_nt\.gz$")
+    cfg.setdefault("include_regex", r".*\.fna\.gz$")
+    cfg.setdefault("exclude_regex", None)
     cfg.setdefault("max_crawl_concurrency", 4)
+    cfg.setdefault("max_depth", 1)
     cfg.setdefault("max_concurrent_downloads", 8)
     cfg.setdefault("max_total_workers", 96)
     cfg.setdefault("sourmash_params", DEFAULT_PARAMS)
@@ -156,6 +174,8 @@ def load_config(path: str) -> dict:
     cfg.setdefault("request_timeout_seconds", 3600)
     cfg.setdefault("max_retries", 6)
     cfg.setdefault("rate_limit_bytes_per_sec", None)
+    cfg.setdefault("dry_run", False)
+    cfg.setdefault("smoke_test_limit", None)
     for key in ("output_root", "tmp_root", "state_db", "log_path"):
         if key not in cfg:
             raise ValueError(f"Missing required config key: {key}")
@@ -169,7 +189,7 @@ async def main_async(cfg_path: str):
 
 def main():
     import argparse, asyncio
-    p = argparse.ArgumentParser(description="NCBI WGS sourmash sketcher")
+    p = argparse.ArgumentParser(description="NCBI FTP sourmash sketcher")
     p.add_argument("--config", "-c", required=True, help="Path to YAML config")
     args = p.parse_args()
     asyncio.run(main_async(args.config))
