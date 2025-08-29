@@ -40,7 +40,6 @@ class DB:
                 if stmt.strip():
                     self.conn.execute(stmt)
 
-    # --- add to wgs_sketcher/db.py (class DB) ---
     def claim_next(self,
                    error_cooldown_seconds: int = 3600,
                    error_max_total_tries: int = 20) -> Optional[Tuple[int, str, str, str]]:

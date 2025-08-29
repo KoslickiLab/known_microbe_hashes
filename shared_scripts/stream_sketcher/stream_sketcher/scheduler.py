@@ -3,9 +3,10 @@ import asyncio
 import os
 import aiohttp
 import signal
-from .utils import LOG, build_logger, shard_subdir_for, INCLUDE_RE_DEFAULT, RateLimiter
+import logging
+from .utils import LOG, build_logger, shard_subdir_for, RateLimiter
 from .db import DB
-from .crawler import crawl_wgs
+from .crawler import crawl
 from .worker import download_file, run_sourmash
 
 DEFAULT_PARAMS = "k=15,k=31,k=33,scaled=1000,noabund"
@@ -13,18 +14,32 @@ DEFAULT_PARAMS = "k=15,k=31,k=33,scaled=1000,noabund"
 class Sketcher:
     def __init__(self, config: dict):
         self.cfg = config
-        build_logger(self.cfg.get("log_path"))
+        level_name = str(self.cfg.get("log_level", "INFO")).upper()
+        level = getattr(logging, level_name, logging.INFO)
+        build_logger(self.cfg.get("log_path"), level)
         self.db = DB(self.cfg["state_db"])
         self.stop_flag = False
 
     async def crawl_and_enqueue(self):
         base_url = self.cfg["base_url"].rstrip("/")
-        include_re = self.cfg.get("include_regex", INCLUDE_RE_DEFAULT)
+        include_re = self.cfg.get("include_regex")
+        exclude_re = self.cfg.get("exclude_regex")
+        max_depth = self.cfg.get("max_depth", None)
         crawl_conc = int(self.cfg.get("max_crawl_concurrency", 4))
-        headers = {"User-Agent": self.cfg.get("user_agent", "wgs-sketcher/1.0")}
-        async for subdir, filename, url, size, mtime in crawl_wgs(base_url, include_re, crawl_conc, headers=headers):
-            self.db.upsert_file(subdir, filename, url, size, mtime)
-        LOG.info("Crawl finished.")
+        headers = {"User-Agent": self.cfg.get("user_agent", "Stream Sketcher/1.0")}
+        limit = self.cfg.get("smoke_test_limit")
+        dry_run = bool(self.cfg.get("dry_run", False))
+        count = 0
+        async for subdir, filename, url, size, mtime in crawl(base_url, include_re, exclude_re, max_depth, crawl_conc, headers=headers):
+            if dry_run:
+                LOG.info("Would enqueue %s", url)
+            else:
+                self.db.upsert_file(subdir, filename, url, size, mtime)
+            count += 1
+            if limit and count >= int(limit):
+                LOG.info("Reached smoke test limit of %s files", limit)
+                break
+        LOG.info("Crawl finished with %d files.", count)
 
     async def worker(self, session: aiohttp.ClientSession, net_sem: asyncio.Semaphore, rate: RateLimiter):
         params = self.cfg.get("sourmash_params", DEFAULT_PARAMS)
@@ -33,6 +48,7 @@ class Sketcher:
         out_root = self.cfg["output_root"]
         retry_max = int(self.cfg.get("max_retries", 6))
         timeout = int(self.cfg.get("request_timeout_seconds", 3600))
+        shard_mod = int(self.cfg.get("shard_modulus", 512))
 
         error_cooldown = int(self.cfg.get("error_retry_cooldown_seconds", 1800))
         error_max_total = int(self.cfg.get("error_max_total_tries", 20))
@@ -55,7 +71,7 @@ class Sketcher:
             file_id, subdir, filename, url = claim
             LOG.debug("Claimed id=%s subdir=%s file=%s", file_id, subdir, filename)
 
-            rel_dir = subdir or shard_subdir_for(filename)
+            rel_dir = shard_subdir_for(filename, shard_mod)
             local_tmp = os.path.join(tmp_root, rel_dir, filename)
             local_out = os.path.join(out_root, rel_dir, filename + ".sig.zip")
 
@@ -90,14 +106,17 @@ class Sketcher:
                         pass
 
     async def run(self):
-        # ensure dirs exist (as before)
+        # ensure dirs exist
         for p in (self.cfg["output_root"], self.cfg["tmp_root"],
                   os.path.dirname(self.cfg["state_db"]),
                   os.path.dirname(self.cfg.get("log_path", "/tmp/void.log"))):
             if p:
                 os.makedirs(p, exist_ok=True)
 
-        # NEW: requeue stuck rows from a previous run
+        if self.cfg.get("dry_run", False):
+            await self.crawl_and_enqueue()
+            return
+
         stale = int(self.cfg.get("stale_seconds", 3600))
         self.db.reset_stuck(stale)
 
@@ -111,8 +130,7 @@ class Sketcher:
         conn = aiohttp.TCPConnector(limit_per_host=max_dl, limit=max_dl)
         timeout = aiohttp.ClientTimeout(total=None, sock_connect=120, sock_read=3600)
 
-        # NEW: user agent for NCBI courtesy
-        headers = {"User-Agent": self.cfg.get("user_agent", "wgs-sketcher/1.0")}
+        headers = {"User-Agent": self.cfg.get("user_agent", "Stream Sketcher/1.0")}
 
         async with aiohttp.ClientSession(connector=conn, timeout=timeout, headers=headers) as session:
             total_workers = int(self.cfg.get("max_total_workers", 96))
@@ -146,19 +164,31 @@ def load_config(path: str) -> dict:
     import yaml, os
     with open(path, "r") as f:
         cfg = yaml.safe_load(f)
-    cfg.setdefault("base_url", "https://ftp.ncbi.nlm.nih.gov/genbank/wgs")
-    cfg.setdefault("include_regex", r"^wgs\.[A-Z0-9]+(?:\.\d+)?\.fsa_nt\.gz$")
+    cfg.setdefault("base_url", "https://ftp.ncbi.nlm.nih.gov/genomes/all")
+    cfg.setdefault("output_root", "/scratch/genbank_genomes_all/genomes_all_sketches")
+    cfg.setdefault("tmp_root", "/scratch/genbank_genomes_all/genomes_all_tmp")
+    cfg.setdefault("state_db", "/scratch/genbank_genomes_all/_state/sketcher.sqlite")
+    cfg.setdefault("log_path", "/scratch/genbank_genomes_all/logs/sketcher.log")
+    cfg.setdefault("include_regex", r".*\.fna\.gz$")
+    cfg.setdefault("exclude_regex", None)
     cfg.setdefault("max_crawl_concurrency", 4)
+    cfg.setdefault("max_depth", None)
     cfg.setdefault("max_concurrent_downloads", 8)
     cfg.setdefault("max_total_workers", 96)
+    cfg.setdefault("rate_limit_bytes_per_sec", None)
+    cfg.setdefault("user_agent", "Stream Sketcher/1.0 (+dmk333@psu.edu; admin=dmk333@psu.edu)")
+    cfg.setdefault("error_retry_cooldown_seconds", 1800)
+    cfg.setdefault("error_max_total_tries", 20)
+    cfg.setdefault("stale_seconds", 3600)
+    cfg.setdefault("dry_run", True)
+    cfg.setdefault("smoke_test_limit", None)
     cfg.setdefault("sourmash_params", DEFAULT_PARAMS)
     cfg.setdefault("sourmash_threads", 1)
     cfg.setdefault("request_timeout_seconds", 3600)
-    cfg.setdefault("max_retries", 6)
-    cfg.setdefault("rate_limit_bytes_per_sec", None)
+    cfg.setdefault("max_retries", 8)
+    cfg.setdefault("shard_modulus", 512)
+    cfg.setdefault("log_level", "INFO")
     for key in ("output_root", "tmp_root", "state_db", "log_path"):
-        if key not in cfg:
-            raise ValueError(f"Missing required config key: {key}")
         cfg[key] = os.path.abspath(os.path.expanduser(cfg[key]))
     return cfg
 
@@ -169,7 +199,7 @@ async def main_async(cfg_path: str):
 
 def main():
     import argparse, asyncio
-    p = argparse.ArgumentParser(description="NCBI WGS sourmash sketcher")
+    p = argparse.ArgumentParser(description="Stream sourmash sketcher")
     p.add_argument("--config", "-c", required=True, help="Path to YAML config")
     args = p.parse_args()
     asyncio.run(main_async(args.config))

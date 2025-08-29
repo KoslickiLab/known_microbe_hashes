@@ -1,23 +1,31 @@
+base_url: "https://ftp.ncbi.nlm.nih.gov/genomes/all"
+output_root: "/scratch/genbank_genomes_all/genomes_all_sketches"
+tmp_root: "/scratch/genbank_genomes_all/genomes_all_tmp"
+state_db: "/scratch/genbank_genomes_all/_state/sketcher.sqlite"
+log_path: "/scratch/genbank_genomes_all/logs/sketcher.log"
 
-base_url: "https://ftp.ncbi.nlm.nih.gov/genbank/wgs"
-output_root: "/scratch/genbank_wgs/wgs_sketches"
-tmp_root: "/scratch/genbank_wgs/wgs_tmp"
-state_db: "/scratch/genbank_wgs/wgs_state/wgs_sketcher.sqlite"
-log_path: "/scratch/genbank_wgs/wgs_logs/wgs_sketcher.log"
-
-include_regex: '^wgs\.[A-Z0-9]+(?:\.\d+)?\.fsa_nt\.gz$'
+# Match any FASTA nucleotide archive by default. Adjust as needed.
+include_regex: '.*\.fna\.gz$'
+exclude_regex: null
 
 max_crawl_concurrency: 4
+max_depth: null
 max_concurrent_downloads: 8
 max_total_workers: 96
 rate_limit_bytes_per_sec: null
-user_agent: "WGS Sketcher/1.0 (+dmk333@psu.edu; admin=dmk333@psu.edu)"
+user_agent: "Stream Sketcher/1.0 (+dmk333@psu.edu; admin=dmk333@psu.edu)"
 error_retry_cooldown_seconds: 1800   # only revisit ERROR rows after 30 min
 error_max_total_tries: 20            # cap across the entire lifetime
 stale_seconds: 3600
+
+dry_run: true
+smoke_test_limit: null
 
 sourmash_params: "k=15,k=31,k=33,scaled=1000,noabund"
 sourmash_threads: 1
 
 request_timeout_seconds: 3600
 max_retries: 8
+
+shard_modulus: 512
+log_level: INFO
