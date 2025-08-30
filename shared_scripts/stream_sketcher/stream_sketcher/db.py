@@ -139,3 +139,17 @@ class DB:
                 (limit,)
             )
             return cur.fetchall()
+
+    def iter_pending(self, batch_size: int = 1000):
+        offset = 0
+        while True:
+            with self._lock:
+                rows = self.conn.execute(
+                    "SELECT id, subdir, filename, url FROM files WHERE status='PENDING' ORDER BY id LIMIT ? OFFSET ?",
+                    (batch_size, offset),
+                ).fetchall()
+            if not rows:
+                break
+            for row in rows:
+                yield row
+            offset += batch_size

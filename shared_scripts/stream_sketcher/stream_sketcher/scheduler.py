@@ -45,6 +45,41 @@ class Sketcher:
                 break
         LOG.info("Crawl finished with %d files.", count)
 
+    async def verify_enqueued(self):
+        headers = {"User-Agent": self.cfg.get("user_agent", "Stream Sketcher/1.0")}
+        max_dl = int(self.cfg.get("max_concurrent_downloads", 8))
+        timeout = int(self.cfg.get("request_timeout_seconds", 3600))
+        conn = aiohttp.TCPConnector(limit_per_host=max_dl, limit=max_dl)
+        client_timeout = aiohttp.ClientTimeout(total=None, sock_connect=120, sock_read=timeout)
+        sem = asyncio.Semaphore(max_dl)
+        count = 0
+
+        async with aiohttp.ClientSession(connector=conn, timeout=client_timeout, headers=headers) as session:
+            async def check(fid, url):
+                nonlocal count
+                try:
+                    async with sem:
+                        async with session.head(url) as resp:
+                            if resp.status != 200:
+                                LOG.warning("HEAD %s -> %s", url, resp.status)
+                                self.db.mark_status(fid, "ERROR", error=f"HEAD {resp.status}")
+                except Exception as e:
+                    LOG.warning("HEAD error %s: %r", url, e)
+                    self.db.mark_status(fid, "ERROR", error=str(e))
+                finally:
+                    count += 1
+
+            tasks = []
+            batch_limit = max_dl * 4
+            for fid, _, _, url in self.db.iter_pending():
+                tasks.append(asyncio.create_task(check(fid, url)))
+                if len(tasks) >= batch_limit:
+                    await asyncio.gather(*tasks)
+                    tasks.clear()
+            if tasks:
+                await asyncio.gather(*tasks)
+        LOG.info("Verified %d files", count)
+
     async def worker(self, session: aiohttp.ClientSession, net_sem: asyncio.Semaphore, rate: RateLimiter):
         params = self.cfg.get("sourmash_params", DEFAULT_PARAMS)
         rayon_threads = int(self.cfg.get("sourmash_threads", 1))
@@ -138,14 +173,15 @@ class Sketcher:
             if p:
                 os.makedirs(p, exist_ok=True)
 
+        await self.crawl_and_enqueue()
         if self.cfg.get("dry_run", False):
-            await self.crawl_and_enqueue()
+            LOG.info("Dry run complete; exiting.")
             return
+
+        await self.verify_enqueued()
 
         stale = int(self.cfg.get("stale_seconds", 3600))
         self.db.reset_stuck(stale)
-
-        crawl_task = asyncio.create_task(self.crawl_and_enqueue())
 
         max_dl = int(self.cfg.get("max_concurrent_downloads", 8))
         net_sem = asyncio.Semaphore(max_dl)
@@ -160,7 +196,6 @@ class Sketcher:
         async with aiohttp.ClientSession(connector=conn, timeout=timeout, headers=headers) as session:
             total_workers = int(self.cfg.get("max_total_workers", 96))
             workers = [asyncio.create_task(self.worker(session, net_sem, rate)) for _ in range(total_workers)]
-            # Log worker crashes immediately
             for w in workers:
                 w.add_done_callback(lambda t: LOG.exception("Worker crashed: %r", t.exception()) if t.exception() else None)
             monitor_task = asyncio.create_task(self._monitor(workers))
@@ -169,12 +204,14 @@ class Sketcher:
             for sig in (signal.SIGINT, signal.SIGTERM):
                 loop.add_signal_handler(sig, self._request_stop)
 
-            await crawl_task
-            LOG.info("Crawler finished; continuing until queue is exhausted...")
-
             while True:
                 st = self.db.stats()
-                pending = st["by_status"].get("PENDING", 0) + st["by_status"].get("ERROR", 0) + st["by_status"].get("DOWNLOADING", 0) + st["by_status"].get("SKETCHING", 0)
+                pending = (
+                    st["by_status"].get("PENDING", 0)
+                    + st["by_status"].get("ERROR", 0)
+                    + st["by_status"].get("DOWNLOADING", 0)
+                    + st["by_status"].get("SKETCHING", 0)
+                )
                 if pending == 0:
                     self.stop_flag = True
                     break

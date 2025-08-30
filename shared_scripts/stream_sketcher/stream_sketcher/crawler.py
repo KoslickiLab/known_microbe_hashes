@@ -57,7 +57,16 @@ async def crawl(
                     hrefs = parse_listing_for_hrefs(html)
                     for h in hrefs:
                         h = h.strip().split("?")[0]
-                        if not h or h in ("../", "./") or h.startswith("/") or "://" in h:
+                        # skip parents, absolutes, and any href that contains
+                        # a slash other than a trailing one (which indicates
+                        # a nested path relative to site root)
+                        if (
+                            not h
+                            or h in ("../", "./")
+                            or h.startswith("/")
+                            or "://" in h
+                            or "/" in h.rstrip("/")
+                        ):
                             continue
                         if h.endswith("/"):
                             if max_depth is None or depth < max_depth:
