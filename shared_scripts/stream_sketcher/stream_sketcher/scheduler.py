@@ -167,7 +167,7 @@ class Sketcher:
 
             await asyncio.gather(*workers, return_exceptions=True)
             monitor_task.cancel()
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(asyncio.CancelledError):
                 await monitor_task
 
     def _request_stop(self):

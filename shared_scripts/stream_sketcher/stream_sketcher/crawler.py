@@ -47,7 +47,10 @@ async def crawl(
         async def dir_worker():
             while True:
                 rel_dir, depth = await dir_queue.get()
-                url = urljoin(base_url, rel_dir + "/")
+                if rel_dir:
+                    url = urljoin(base_url, rel_dir.strip("/") + "/")
+                else:
+                    url = base_url
                 LOG.debug("Listing %s", url)
                 html = await fetch_text(session, url)
                 if html:
