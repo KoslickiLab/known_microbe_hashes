@@ -5,6 +5,7 @@ import aiohttp
 import signal
 import logging
 import contextlib
+import zipfile
 from .utils import LOG, build_logger, shard_subdir_for, RateLimiter
 from .db import DB
 from .crawler import crawl
@@ -79,9 +80,18 @@ class Sketcher:
             local_out = os.path.join(out_root, rel_dir, filename + ".sig.zip")
 
             if os.path.exists(local_out):
-                LOG.debug("Skipping existing output %s", local_out)
-                self.db.mark_status(file_id, "DONE", out_path=local_out)
-                continue
+                try:
+                    with zipfile.ZipFile(local_out):
+                        pass
+                    LOG.debug("Skipping existing output %s", local_out)
+                    self.db.mark_status(file_id, "DONE", out_path=local_out)
+                    continue
+                except zipfile.BadZipFile:
+                    LOG.warning("Removing corrupt output %s", local_out)
+                    try:
+                        os.remove(local_out)
+                    except Exception:
+                        pass
 
             tries = 0
             while tries <= retry_max and not self.stop_flag:
@@ -113,6 +123,8 @@ class Sketcher:
                     try:
                         if os.path.exists(local_tmp):
                             os.remove(local_tmp)
+                        if os.path.exists(local_out):
+                            os.remove(local_out)
                     except Exception:
                         pass
             else:
