@@ -91,9 +91,12 @@ class Sketcher:
                         await download_file(session, url, local_tmp, rate, timeout=timeout)
                     self.db.mark_status(file_id, "SKETCHING")
                     LOG.debug("Sketching %s", local_tmp)
+                    if not os.path.exists(local_tmp):
+                        raise FileNotFoundError(f"Missing downloaded file {local_tmp}")
                     rc, out = await run_sourmash(local_tmp, local_out, params, rayon_threads, log=LOG)
                     if rc != 0:
-                        raise RuntimeError(f"sourmash failed rc={rc}: {out[:500]}")
+                        LOG.error("sourmash failed rc=%s for %s\n%s", rc, local_tmp, out)
+                        raise RuntimeError(f"sourmash failed rc={rc} for {local_tmp}")
                     self.db.mark_status(file_id, "DONE", out_path=local_out)
                     LOG.info("Finished %s", url)
                     try:
