@@ -5,12 +5,10 @@ import re
 import sys
 import time
 import logging
+import hashlib
 from typing import Optional
 
-LOG = logging.getLogger("wgs_sketcher")
-
-INCLUDE_RE_DEFAULT = r"^wgs\.[A-Z0-9]+(?:\.\d+)?\.fsa_nt\.gz$"
-EXCLUDE_RE_DEFAULT = r"\.(?:gbff|faa|fsa_aa|faa_aa|aa)\.gz$"
+LOG = logging.getLogger("stream_sketcher")
 
 def build_logger(log_path: Optional[str]=None, level: int=logging.INFO):
     LOG.setLevel(level)
@@ -24,21 +22,17 @@ def build_logger(log_path: Optional[str]=None, level: int=logging.INFO):
         fh.setFormatter(fmt)
         LOG.addHandler(fh)
 
-def is_target_file(filename: str, include_re: str=INCLUDE_RE_DEFAULT) -> bool:
-    return re.match(include_re, os.path.basename(filename)) is not None
+def is_target_file(filename: str, include_re: str, exclude_re: Optional[str] = None) -> bool:
+    """Return True if filename matches include_re and not exclude_re."""
+    name = os.path.basename(filename)
+    if exclude_re and re.match(exclude_re, name):
+        return False
+    return re.match(include_re, name) is not None
 
-def shard_subdir_for(filename: str) -> str:
-    """Choose an output shard directory for a given WGS file.
-    Mirrors upstream: use first 3 letters after 'wgs.' as subdir.
-    """
-    b = os.path.basename(filename)
-    if b.startswith("wgs."):
-        rest = b[4:]
-        parts = rest.split(".")
-        if parts:
-            prefix = parts[0][:3]
-            return prefix if prefix else "misc"
-    return "misc"
+def shard_subdir_for(filename: str, modulus: int) -> str:
+    """Hash the filename and return a shard bucket as a string."""
+    h = hashlib.sha256(filename.encode("utf-8")).hexdigest()
+    return str(int(h, 16) % modulus)
 
 class RateLimiter:
     """Token-bucket style rate limiter (bytes per second)."""
