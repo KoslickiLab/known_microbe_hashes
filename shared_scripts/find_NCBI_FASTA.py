@@ -71,6 +71,8 @@ DEFAULT_SKIP_PREFIXES = [
     "/genbank/wgs/",
     "/genbank/tsa/",
     "/genbank/tls/",
+    "/sra/",
+    "/geo"
 ]
 
 SUSPICIOUS_SUBSTRINGS = ("/./", "/../", "./", "../")
