@@ -72,10 +72,12 @@ DEFAULT_SKIP_PREFIXES = [
     "/genbank/tsa/",
     "/genbank/tls/",
     "/sra/",
-    "/geo"
+    "/geo",
+    "/blast/windowmasker_files/"
 ]
 
 SUSPICIOUS_SUBSTRINGS = ("/./", "/../", "./", "../")
+ALL_FTP_ERRORS = ftplib.all_errors + (TimeoutError, ConnectionResetError, BrokenPipeError)
 
 def is_suspicious_path(path: str) -> bool:
     return any(x in path for x in SUSPICIOUS_SUBSTRINGS)
@@ -179,7 +181,8 @@ class NCBIFTP:
                     return self._list_fallback(path)
                 except Exception as e2:
                     self.logger.warning(f"LIST failed at {path}: {e2}")
-            except (ftplib.all_errors, OSError) as e:
+            #except (ftplib.all_errors, OSError) as e:
+            except ALL_FTP_ERRORS as e:
                 self.logger.warning(f"List failed at {path}: {e.__class__.__name__}: {e} (attempt {attempt})")
                 if attempt >= self.retries:
                     self.logger.error(f"Giving up on {path} after {attempt} attempts.")
