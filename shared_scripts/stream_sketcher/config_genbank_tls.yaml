@@ -1,16 +1,16 @@
-base_url: "https://ftp.ncbi.nlm.nih.gov/genomes/all"
-output_root: "/scratch/genbank_genomes_all/genomes_all_sketches"
-tmp_root: "/scratch/genbank_genomes_all/genomes_all_tmp"
-state_db: "/scratch/genbank_genomes_all/_state/sketcher.sqlite"
-log_path: "/scratch/genbank_genomes_all/logs/sketcher.log"
+base_url: "https://ftp.ncbi.nlm.nih.gov/genomes/tls"
+output_root: "/scratch/genbank_genomes_tls/genomes_tls_sketches"
+tmp_root: "/scratch/genbank_genomes_tls/genomes_tls_tmp"
+state_db: "/scratch/genbank_genomes_tls/_state/sketcher.sqlite"
+log_path: "/scratch/genbank_genomes_tls/logs/sketcher.log"
 
 # Match any FASTA nucleotide archive by default. Adjust as needed.
-include_regex: '.*\.fna\.gz$'
+include_regex: '.*\.fsa_nt\.gz$'
 exclude_regex: null
 
 max_crawl_concurrency: 4
 max_depth: null
-max_concurrent_downloads: 8
+max_concurrent_downloads: 10
 max_total_workers: 96
 rate_limit_bytes_per_sec: null
 user_agent: "Stream Sketcher/1.0 (+dmk333@psu.edu; admin=dmk333@psu.edu)"

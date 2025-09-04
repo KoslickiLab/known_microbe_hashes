@@ -3,6 +3,7 @@ import asyncio
 import aiohttp
 import os
 import logging
+import zipfile
 from typing import Optional, Tuple
 from .utils import LOG, RateLimiter
 
@@ -32,6 +33,8 @@ async def download_file(session: aiohttp.ClientSession, url: str, dest_path: str
 
 async def run_sourmash(input_path: str, output_path: str, params: str, rayon_threads: int=1, extra_env=None, log: Optional[logging.Logger]=None) -> Tuple[int, str]:
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
+    if not os.path.exists(input_path):
+        return 1, f"input file not found: {input_path}"
     env = os.environ.copy()
     env["RAYON_NUM_THREADS"] = str(rayon_threads)
     if extra_env:
@@ -48,4 +51,6 @@ async def run_sourmash(input_path: str, output_path: str, params: str, rayon_thr
     out, err = await proc.communicate()
     rc = proc.returncode
     out_combined = (out or b"").decode() + (err or b"").decode()
+    if rc == 0 and not zipfile.is_zipfile(output_path):
+        return 1, f"output not a valid zip: {output_path}"
     return rc, out_combined

@@ -1,14 +1,15 @@
-
 import asyncio
 import aiohttp
 import re
-from typing import List, Tuple, Optional
+import posixpath
+from urllib.parse import urljoin
+from typing import List, Optional, AsyncGenerator, Tuple, Set
 from .utils import LOG, is_target_file
 
 LISTING_HREF_RE = re.compile(r'href="([^"]+)"', re.IGNORECASE)
-SUBDIR_RE = re.compile(r'^(?:[A-Z]/|[A-Z0-9]{3}/)$')  # A/ or AAA/
 
-async def fetch_text(session: aiohttp.ClientSession, url: str, timeout: int=120) -> Optional[str]:
+
+async def fetch_text(session: aiohttp.ClientSession, url: str, timeout: int = 120) -> Optional[str]:
     try:
         async with session.get(url, timeout=timeout) as resp:
             if resp.status != 200:
@@ -19,51 +20,85 @@ async def fetch_text(session: aiohttp.ClientSession, url: str, timeout: int=120)
         LOG.warning("Error fetching %s: %r", url, e)
         return None
 
+
 def parse_listing_for_hrefs(html: str) -> List[str]:
     return LISTING_HREF_RE.findall(html)
 
-def partition_dirs_and_files(hrefs: List[str]) -> Tuple[List[str], List[str]]:
-    subdirs = []
-    files = []
-    for h in hrefs:
-        if h in ("../", "./"):
-            continue
-        if SUBDIR_RE.match(h):
-            subdirs.append(h)
-        elif h.endswith(".gz"):
-            files.append(h)
-        else:
-            pass
-    return subdirs, files
 
-async def crawl_wgs(base_url: str, include_re: str, max_concurrency: int = 4, headers: Optional[dict] = None):
+async def crawl(
+    base_url: str,
+    include_re: str,
+    exclude_re: Optional[str] = None,
+    max_depth: Optional[int] = None,
+    max_concurrency: int = 4,
+    headers: Optional[dict] = None,
+) -> AsyncGenerator[Tuple[str, str, str, Optional[int], Optional[str]], None]:
+    """Generic recursive crawler for FTP directory listings."""
 
+    base_url = base_url.rstrip("/") + "/"
     conn = aiohttp.TCPConnector(limit_per_host=max_concurrency, limit=max_concurrency)
     async with aiohttp.ClientSession(connector=conn, headers=headers) as session:
-        index_html = await fetch_text(session, base_url + "/")
-        if not index_html:
-            raise RuntimeError(f"Failed to fetch root listing: {base_url}/")
-        hrefs = parse_listing_for_hrefs(index_html)
-        subdirs, _ = partition_dirs_and_files(hrefs)
-        LOG.info("Found %d subdirs at root.", len(subdirs))
-        sem = asyncio.Semaphore(max_concurrency)
+        dir_queue: asyncio.Queue[Tuple[str, int]] = asyncio.Queue()
+        file_queue: asyncio.Queue[Optional[Tuple[str, str, str, Optional[int], Optional[str]]]] = asyncio.Queue()
+        visited: Set[str] = set()
 
-        async def crawl_subdir(subdir: str):
-            url = f"{base_url}/{subdir}"
-            async with sem:
+        await dir_queue.put(("", 0))
+
+        async def dir_worker():
+            while True:
+                rel_dir, depth = await dir_queue.get()
+                if rel_dir:
+                    url = urljoin(base_url, rel_dir.strip("/") + "/")
+                else:
+                    url = base_url
+                LOG.debug("Listing %s", url)
                 html = await fetch_text(session, url)
-            if not html:
-                return []
-            hrefs2 = parse_listing_for_hrefs(html)
-            _, files = partition_dirs_and_files(hrefs2)
-            results = []
-            for f in files:
-                if is_target_file(f, include_re=include_re):
-                    results.append((subdir.strip("/"), f, f"{base_url}/{subdir}{f}", None, None))
-            LOG.info("Subdir %s: %d target files.", subdir.strip("/"), len(results))
-            return results
+                if html:
+                    hrefs = parse_listing_for_hrefs(html)
+                    for h in hrefs:
+                        h = h.strip().split("?")[0]
+                        # skip parents, absolutes, and any href that contains
+                        # a slash other than a trailing one (which indicates
+                        # a nested path relative to site root)
+                        if (
+                            not h
+                            or h in ("../", "./")
+                            or h.startswith("/")
+                            or "://" in h
+                            or "/" in h.rstrip("/")
+                        ):
+                            continue
+                        if h.endswith("/"):
+                            if max_depth is None or depth < max_depth:
+                                child_rel = posixpath.normpath(posixpath.join(rel_dir, h))
+                                if child_rel == "." or child_rel in visited:
+                                    continue
+                                visited.add(child_rel)
+                                LOG.debug("Queueing subdir %s", child_rel)
+                                await dir_queue.put((child_rel, depth + 1))
+                        else:
+                            if is_target_file(h, include_re, exclude_re):
+                                file_url = urljoin(url, h)
+                                LOG.debug("Found file %s", file_url)
+                                await file_queue.put((rel_dir, h, file_url, None, None))
+                dir_queue.task_done()
 
-        tasks = [asyncio.create_task(crawl_subdir(sd)) for sd in subdirs]
-        for task in asyncio.as_completed(tasks):
-            for item in await task:
-                yield item
+        workers = [asyncio.create_task(dir_worker()) for _ in range(max_concurrency)]
+
+        async def finalize():
+            await dir_queue.join()
+            for w in workers:
+                w.cancel()
+            await asyncio.gather(*workers, return_exceptions=True)
+            await file_queue.put(None)
+
+        fin_task = asyncio.create_task(finalize())
+
+        while True:
+            item = await file_queue.get()
+            if item is None:
+                break
+            yield item
+
+        await fin_task
+

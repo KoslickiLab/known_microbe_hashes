@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
 set -euo pipefail
-python -m wgs_sketcher --config config.yaml
+python -m stream_sketcher --config config.yaml
