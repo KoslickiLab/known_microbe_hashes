@@ -1,8 +1,8 @@
-base_url: "https://ftp.ncbi.nlm.nih.gov/genomes/tls"
-output_root: "/scratch/genbank_genomes_tls/genomes_tls_sketches"
-tmp_root: "/scratch/genbank_genomes_tls/genomes_tls_tmp"
-state_db: "/scratch/genbank_genomes_tls/_state/sketcher.sqlite"
-log_path: "/scratch/genbank_genomes_tls/logs/sketcher.log"
+base_url: "https://ftp.ncbi.nlm.nih.gov/genbank/tls"
+output_root: "/scratch/genbank_tls/tls_sketches"
+tmp_root: "/scratch/genbank_tls/tls_tmp"
+state_db: "/scratch/genbank_tls/_state/sketcher.sqlite"
+log_path: "/scratch/genbank_tls/logs/sketcher.log"
 
 # Match any FASTA nucleotide archive by default. Adjust as needed.
 include_regex: '.*\.fsa_nt\.gz$'
