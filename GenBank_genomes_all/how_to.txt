@@ -1,0 +1,2 @@
+first run the stream sketcher with the genbank genomes all config YAML file
+Then export, dedup, and import to DuckDB
