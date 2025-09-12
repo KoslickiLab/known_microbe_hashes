@@ -47,6 +47,21 @@
 # ksize: ksize
 /scratch/dmk333_new/known_microbe_hashes/GenBank_TSA/data/genbank_tsa_unique_hashes.db
 
+# Logan obelisks
+# table: unique_hashes
+# column: hash
+# set_id: right
+# ksize: ksize
+/scratch/dmk333_new/known_microbe_hashes/Logan_obelisks/data/Obelisks_unique_hashes.db
+
+# Logan plasmids
+# Logan obelisks
+# table: unique_hashes
+# column: hash
+# set_id: right
+# ksize: ksize
+/scratch/dmk333_new/known_microbe_hashes/Logan_plasmids/data/plasmids_unique_hashes.db
+
 # Logan metagenomes (just the unique 31mer hashes)
 # table: sigs_dna.unique_hash_k31
 # column: hash
