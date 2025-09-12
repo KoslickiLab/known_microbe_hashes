@@ -1,0 +1,56 @@
+# GenBank WGS
+# table: unique_hashes
+# column: hash
+# set_id: right
+# ksize: ksize
+/scratch/dmk333_new/known_microbe_hashes/GenBankWGS/data/wgs_unique_hashes.db
+
+# GenBank genomes
+# table: unique_hashes
+# column: hash
+# set_id: right
+# ksize: ksize
+/scratch/dmk333_new/known_microbe_hashes/GenBank_genomes_all/data/genbank_genomes_all_unique_hashes.db
+
+# AllTheBacteria
+# table: unique_hashes
+# column: hash
+# set_id: right
+# ksize: ksize
+/scratch/dmk333_new/known_microbe_hashes/AllTheBacteria/data/atb_unique_hashes.db
+
+# GTDB
+# table: unique_hashes
+# column: hash
+# set_id: right
+# ksize: ksize
+/scratch/dmk333_new/known_microbe_hashes/GTDB/data/GTDB_unique_hashes.db
+
+# SILVA
+# table: unique_hashes
+# column: hash
+# set_id: right
+# ksize: ksize
+/scratch/dmk333_new/known_microbe_hashes/SILVA/data/SILVA_unique_hashes.db
+
+# GenBank TLS
+# table: unique_hashes
+# column: hash
+# set_id: right
+# ksize: ksize
+/scratch/dmk333_new/unclassified_frequent_Logan_metagenome_hashes/data/logan_metagenome_unique_hashes.db
+
+# GenBank TSA
+# table: unique_hashes
+# column: hash
+# set_id: right
+# ksize: ksize
+/scratch/dmk333_new/known_microbe_hashes/GenBank_TSA/data/genbank_tsa_unique_hashes.db
+
+# Logan metagenomes (just the unique 31mer hashes)
+# table: sigs_dna.unique_hash_k31
+# column: hash
+# set_id: left
+# ksize: None
+/scratch/dmk333_new/unclassified_frequent_Logan_metagenome_hashes/data/logan_metagenome_unique_hashes.db
+
