@@ -1,0 +1,94 @@
+{
+  "databases": [
+    {
+      "name": "GenBank WGS",
+      "alias": "genbank_wgs",
+      "path": "/scratch/dmk333_new/known_microbe_hashes/GenBankWGS/data/wgs_unique_hashes.db",
+      "table": "unique_hashes",
+      "column": "hash",
+      "set_id": "right",
+      "ksize": "ksize"
+    },
+    {
+      "name": "GenBank genomes",
+      "alias": "genbank_genomes",
+      "path": "/scratch/dmk333_new/known_microbe_hashes/GenBank_genomes_all/data/genbank_genomes_all_unique_hashes.db",
+      "table": "unique_hashes",
+      "column": "hash",
+      "set_id": "right",
+      "ksize": "ksize"
+    },
+    {
+      "name": "AllTheBacteria",
+      "alias": "atb",
+      "path": "/scratch/dmk333_new/known_microbe_hashes/AllTheBacteria/data/atb_unique_hashes.db",
+      "table": "unique_hashes",
+      "column": "hash",
+      "set_id": "right",
+      "ksize": "ksize"
+    },
+    {
+      "name": "GTDB",
+      "alias": "gtdb",
+      "path": "/scratch/dmk333_new/known_microbe_hashes/GTDB/data/GTDB_unique_hashes.db",
+      "table": "unique_hashes",
+      "column": "hash",
+      "set_id": "right",
+      "ksize": "ksize"
+    },
+    {
+      "name": "SILVA",
+      "alias": "silva",
+      "path": "/scratch/dmk333_new/known_microbe_hashes/SILVA/data/SILVA_unique_hashes.db",
+      "table": "unique_hashes",
+      "column": "hash",
+      "set_id": "right",
+      "ksize": "ksize"
+    },
+    {
+      "name": "GenBank TLS",
+      "alias": "genbank_tls",
+      "path": "/scratch/dmk333_new/known_microbe_hashes/GenBank_TLS/data/genbank_tls_unique_hashes.db",
+      "table": "unique_hashes",
+      "column": "hash",
+      "set_id": "right",
+      "ksize": "ksize"
+    },
+    {
+      "name": "GenBank TSA",
+      "alias": "genbank_tsa",
+      "path": "/scratch/dmk333_new/known_microbe_hashes/GenBank_TSA/data/genbank_tsa_unique_hashes.db",
+      "table": "unique_hashes",
+      "column": "hash",
+      "set_id": "right",
+      "ksize": "ksize"
+    },
+    {
+      "name": "Logan obelisks",
+      "alias": "logan_obelisks",
+      "path": "/scratch/dmk333_new/known_microbe_hashes/Logan_obelisks/data/Obelisks_unique_hashes.db",
+      "table": "unique_hashes",
+      "column": "hash",
+      "set_id": "right",
+      "ksize": "ksize"
+    },
+    {
+      "name": "Logan plasmids",
+      "alias": "logan_plasmids",
+      "path": "/scratch/dmk333_new/known_microbe_hashes/Logan_plasmids/data/plasmids_unique_hashes.db",
+      "table": "unique_hashes",
+      "column": "hash",
+      "set_id": "right",
+      "ksize": "ksize"
+    },
+    {
+      "name": "Logan metagenomes",
+      "alias": "logan_metagenomes",
+      "path": "/scratch/dmk333_new/unclassified_frequent_Logan_metagenome_hashes/data/logan_metagenome_unique_hashes.db",
+      "table": "sigs_dna.unique_hash_k31",
+      "column": "hash",
+      "set_id": "left",
+      "ksize": null
+    }
+  ]
+}
