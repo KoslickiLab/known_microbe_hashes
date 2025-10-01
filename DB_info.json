@@ -82,6 +82,15 @@
       "ksize": "ksize"
     },
     {
+      "name": "serratus_viruses",
+      "alias": "serratus_viruses",
+      "path": "/scratch/dmk333_new/known_microbe_hashes/Serratus_viruses/data/Serratus_viruses_unique_hashes.db",
+      "table": "unique_hashes",
+      "column": "hash",
+      "set_id": "right",
+      "ksize": "ksize"
+    },
+    {
       "name": "Logan metagenomes",
       "alias": "logan_metagenomes",
       "path": "/scratch/dmk333_new/unclassified_frequent_Logan_metagenome_hashes/data/logan_metagenome_unique_hashes.db",
