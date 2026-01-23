@@ -109,7 +109,7 @@ class Sketcher:
                 try:
                     async with net_sem:
                         LOG.debug("Downloading %s", accession)
-                        await download_accession(
+                        size_bytes = await download_accession(
                             session,
                             accession,
                             local_tmp,
@@ -118,6 +118,7 @@ class Sketcher:
                             timeout=timeout,
                             email=email,
                         )
+                    self.db.update_size(file_id, size_bytes)
                     self.db.mark_status(file_id, "SKETCHING")
                     LOG.debug("Sketching %s", local_tmp)
                     if not os.path.exists(local_tmp):
@@ -135,6 +136,7 @@ class Sketcher:
                     break
                 except EmptyResultError as exc:
                     LOG.info("Empty result for %s: %s", accession, exc)
+                    self.db.update_size(file_id, exc.size)
                     self.db.mark_status(file_id, "EMPTY", error=str(exc))
                     try:
                         if os.path.exists(local_tmp):

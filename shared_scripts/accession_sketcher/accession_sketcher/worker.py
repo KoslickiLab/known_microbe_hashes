@@ -13,7 +13,9 @@ class RateLimitError(RuntimeError):
     pass
 
 class EmptyResultError(RuntimeError):
-    pass
+    def __init__(self, message: str, size: int = 0):
+        super().__init__(message)
+        self.size = size
 
 async def download_accession(
     session: aiohttp.ClientSession,
@@ -42,6 +44,7 @@ async def download_accession(
     if rate:
         await rate.throttle()
 
+    total_bytes = 0
     try:
         async with session.get(EFETCH_URL, params=params, timeout=timeout) as resp:
             text_sample = ""
@@ -54,6 +57,7 @@ async def download_accession(
                 async for chunk in resp.content.iter_chunked(CHUNK_SIZE):
                     if not chunk:
                         continue
+                    total_bytes += len(chunk)
                     f.write(chunk)
             os.replace(tmp_path, dest_path)
     except Exception:
@@ -68,10 +72,11 @@ async def download_accession(
         head = f.read(2048).lstrip()
     if not head.startswith(b">"):
         if not head:
-            raise EmptyResultError(f"EMPTY RESULT for {accession}")
+            raise EmptyResultError(f"EMPTY RESULT for {accession}", size=total_bytes)
         if b"EMPTY RESULT" in head.upper() or b"FAILURE" in head.upper():
-            raise EmptyResultError(head.decode(errors="replace").strip())
+            raise EmptyResultError(head.decode(errors="replace").strip(), size=total_bytes)
         raise RuntimeError(f"Downloaded file does not look like FASTA for {accession}")
+    return total_bytes
 
 async def run_sourmash(
     input_path: str,

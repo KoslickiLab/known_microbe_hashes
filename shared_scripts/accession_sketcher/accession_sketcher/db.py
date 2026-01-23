@@ -131,6 +131,16 @@ class DB:
                     (status, out_path, error, ts, file_id),
                 )
 
+    def update_size(self, file_id: int, size: Optional[int]):
+        if size is None:
+            return
+        ts = time.time()
+        with self._lock, self.conn:
+            self.conn.execute(
+                "UPDATE files SET size=?, updated_at=? WHERE id=?",
+                (size, ts, file_id),
+            )
+
     def stats(self) -> Dict[str, Any]:
         with self._lock:
             cur = self.conn.execute("SELECT status, COUNT(*) FROM files GROUP BY status")
