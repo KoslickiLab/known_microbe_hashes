@@ -17,21 +17,19 @@ class EmptyResultError(RuntimeError):
         super().__init__(message)
         self.size = size
 
-async def download_accession(
+async def download_accessions(
     session: aiohttp.ClientSession,
-    accession: str,
-    dest_path: str,
+    accession_paths: dict[str, str],
     rate: Optional[RequestRateLimiter],
     api_key: Optional[str],
     timeout: int = 3600,
     email: Optional[str] = None,
     tool: str = "accession_sketcher",
-):
-    tmp_path = dest_path + ".part"
-    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+) -> tuple[dict[str, str], dict[str, int], dict[str, str]]:
+    accessions = list(accession_paths.keys())
     params = {
         "db": "nuccore",
-        "id": accession,
+        "id": ",".join(accessions),
         "rettype": "fasta",
         "retmode": "text",
         "tool": tool,
@@ -44,39 +42,86 @@ async def download_accession(
     if rate:
         await rate.throttle()
 
-    total_bytes = 0
+    accession_map = {acc.split(".")[0]: acc for acc in accessions}
+    paths: dict[str, str] = {}
+    sizes: dict[str, int] = {acc: 0 for acc in accessions}
+    file_handles: dict[str, tuple[str, object]] = {}
+    current_acc: Optional[str] = None
+    head_bytes = bytearray()
+
     try:
         async with session.get(EFETCH_URL, params=params, timeout=timeout) as resp:
-            text_sample = ""
             if resp.status != 200:
                 text_sample = (await resp.text())[:500]
                 if resp.status in (429, 503) or "rate limit" in text_sample.lower():
                     raise RateLimitError(text_sample)
                 raise RuntimeError(f"efetch status {resp.status}: {text_sample}")
-            with open(tmp_path, "wb") as f:
-                async for chunk in resp.content.iter_chunked(CHUNK_SIZE):
-                    if not chunk:
-                        continue
-                    total_bytes += len(chunk)
-                    f.write(chunk)
-            os.replace(tmp_path, dest_path)
+
+            buffer = b""
+            async for chunk in resp.content.iter_chunked(CHUNK_SIZE):
+                if not chunk:
+                    continue
+                if len(head_bytes) < 2048:
+                    head_bytes.extend(chunk[: max(0, 2048 - len(head_bytes))])
+                buffer += chunk
+                while b"\n" in buffer:
+                    line, buffer = buffer.split(b"\n", 1)
+                    line += b"\n"
+                    if line.startswith(b">"):
+                        header = line[1:].strip()
+                        header_str = header.decode(errors="replace")
+                        header_token = header_str.split()[0]
+                        header_base = header_token.split(".")[0]
+                        current_acc = accession_map.get(header_base)
+                        if current_acc and current_acc not in file_handles:
+                            tmp_path = accession_paths[current_acc] + ".part"
+                            os.makedirs(os.path.dirname(tmp_path), exist_ok=True)
+                            fhandle = open(tmp_path, "wb")
+                            file_handles[current_acc] = (tmp_path, fhandle)
+                            paths[current_acc] = accession_paths[current_acc]
+                        if current_acc:
+                            file_handles[current_acc][1].write(line)
+                            sizes[current_acc] += len(line)
+                    else:
+                        if current_acc:
+                            file_handles[current_acc][1].write(line)
+                            sizes[current_acc] += len(line)
+
+            if buffer:
+                if len(head_bytes) < 2048:
+                    head_bytes.extend(buffer[: max(0, 2048 - len(head_bytes))])
+                if current_acc:
+                    file_handles[current_acc][1].write(buffer)
+                    sizes[current_acc] += len(buffer)
     except Exception:
-        try:
-            if os.path.exists(tmp_path):
-                os.remove(tmp_path)
-        except Exception:
-            pass
+        for tmp_path, handle in file_handles.values():
+            try:
+                handle.close()
+            except Exception:
+                pass
+            try:
+                if os.path.exists(tmp_path):
+                    os.remove(tmp_path)
+            except Exception:
+                pass
         raise
 
-    with open(dest_path, "rb") as f:
-        head = f.read(2048).lstrip()
-    if not head.startswith(b">"):
-        if not head:
-            raise EmptyResultError(f"EMPTY RESULT for {accession}", size=total_bytes)
-        if b"EMPTY RESULT" in head.upper() or b"FAILURE" in head.upper():
-            raise EmptyResultError(head.decode(errors="replace").strip(), size=total_bytes)
-        raise RuntimeError(f"Downloaded file does not look like FASTA for {accession}")
-    return total_bytes
+    for acc, (tmp_path, handle) in file_handles.items():
+        handle.close()
+        os.replace(tmp_path, paths[acc])
+
+    empty_reason = None
+    if not paths:
+        head_text = head_bytes.decode(errors="replace").strip()
+        if "EMPTY RESULT" in head_text.upper() or "FAILURE" in head_text.upper():
+            empty_reason = head_text or "EMPTY RESULT"
+
+    missing_reasons = {}
+    for acc in accessions:
+        if acc not in paths or sizes.get(acc, 0) == 0:
+            missing_reasons[acc] = empty_reason or f"EMPTY RESULT for {acc}"
+
+    return paths, sizes, missing_reasons
 
 async def run_sourmash(
     input_path: str,

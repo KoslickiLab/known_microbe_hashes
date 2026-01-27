@@ -5,6 +5,7 @@ state_db: /tmp/accession_state/sketcher.sqlite
 log_path: /tmp/accession_logs/sketcher.log
 max_concurrent_downloads: 4
 max_total_workers: 8
+batch_size: 10
 ncbi_api_key: "8dd1e03a1867cb0ce9e5176a520679f15a08"
 requests_per_second: 10
 sourmash_params: "k=15,k=31,k=33,scaled=1000,noabund"

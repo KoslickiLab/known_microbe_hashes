@@ -84,6 +84,59 @@ class DB:
                 (fid,),
             ).fetchone()
 
+    def claim_batch(
+        self,
+        limit: int,
+        error_cooldown_seconds: int = 3600,
+        error_max_total_tries: int = 20,
+    ) -> List[Tuple[int, str, str, str]]:
+        if limit <= 0:
+            return []
+        now = time.time()
+        cutoff = now - error_cooldown_seconds
+        claimed: List[Tuple[int, str, str, str]] = []
+        with self._lock, self.conn:
+            rows = self.conn.execute(
+                "SELECT id FROM files WHERE status='PENDING' ORDER BY id LIMIT ?",
+                (limit,),
+            ).fetchall()
+            for (fid,) in rows:
+                cur = self.conn.execute(
+                    "UPDATE files SET status='DOWNLOADING', updated_at=? "
+                    "WHERE id=? AND status='PENDING'",
+                    (now, fid),
+                )
+                if cur.rowcount == 1:
+                    claimed.append(
+                        self.conn.execute(
+                            "SELECT id, subdir, filename, url FROM files WHERE id=?",
+                            (fid,),
+                        ).fetchone()
+                    )
+            if claimed:
+                return claimed
+
+            rows = self.conn.execute(
+                "SELECT id FROM files "
+                "WHERE status='ERROR' AND tries < ? AND (updated_at IS NULL OR updated_at <= ?) "
+                "ORDER BY updated_at NULLS FIRST, id LIMIT ?",
+                (error_max_total_tries, cutoff, limit),
+            ).fetchall()
+            for (fid,) in rows:
+                cur = self.conn.execute(
+                    "UPDATE files SET status='DOWNLOADING', updated_at=? "
+                    "WHERE id=? AND status='ERROR'",
+                    (now, fid),
+                )
+                if cur.rowcount == 1:
+                    claimed.append(
+                        self.conn.execute(
+                            "SELECT id, subdir, filename, url FROM files WHERE id=?",
+                            (fid,),
+                        ).fetchone()
+                    )
+        return claimed
+
     def reset_stuck(self, stale_seconds: int = 3600):
         threshold = time.time() - stale_seconds
         with self._lock, self.conn:
@@ -140,6 +193,12 @@ class DB:
                 "UPDATE files SET size=?, updated_at=? WHERE id=?",
                 (size, ts, file_id),
             )
+
+    def get_tries(self, file_id: int) -> int:
+        with self._lock:
+            cur = self.conn.execute("SELECT tries FROM files WHERE id=?", (file_id,))
+            row = cur.fetchone()
+            return int(row[0]) if row else 0
 
     def stats(self) -> Dict[str, Any]:
         with self._lock:

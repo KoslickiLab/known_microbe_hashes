@@ -10,7 +10,7 @@ import aiohttp
 
 from .db import DB
 from .utils import LOG, build_logger, shard_subdir_for, RequestRateLimiter
-from .worker import download_accession, run_sourmash, RateLimitError, EmptyResultError
+from .worker import download_accessions, run_sourmash, RateLimitError
 
 DEFAULT_PARAMS = "k=15,k=31,k=33,scaled=1000,noabund"
 
@@ -62,6 +62,7 @@ class Sketcher:
         retry_max = int(self.cfg.get("max_retries", 6))
         timeout = int(self.cfg.get("request_timeout_seconds", 3600))
         shard_mod = int(self.cfg.get("shard_modulus", 512))
+        batch_size = int(self.cfg.get("batch_size", 1))
         api_key = self.cfg.get("ncbi_api_key")
         email = self.cfg.get("email")
         error_cooldown = int(self.cfg.get("error_retry_cooldown_seconds", 1800))
@@ -70,12 +71,12 @@ class Sketcher:
 
         while not self.stop_flag:
             try:
-                claim = self.db.claim_next(error_cooldown, error_max_total)
+                claims = self.db.claim_batch(batch_size, error_cooldown, error_max_total)
             except Exception as exc:
                 LOG.exception("DB error while claiming work: %r", exc)
                 await asyncio.sleep(2.0)
                 continue
-            if not claim:
+            if not claims:
                 idle_cycles += 1
                 if idle_cycles % 30 == 0:
                     st = self.db.stats()
@@ -83,42 +84,74 @@ class Sketcher:
                 await asyncio.sleep(2.0)
                 continue
             idle_cycles = 0
-            file_id, _, accession, _ = claim
-            LOG.debug("Claimed id=%s accession=%s", file_id, accession)
+            accession_paths = {}
+            for file_id, _, accession, _ in claims:
+                LOG.debug("Claimed id=%s accession=%s", file_id, accession)
+                rel_dir = shard_subdir_for(accession, shard_mod)
+                local_tmp = os.path.join(tmp_root, rel_dir, f"{accession}.fasta")
+                local_out = os.path.join(out_root, rel_dir, f"{accession}.sig.zip")
+                accession_paths[accession] = local_tmp
 
-            rel_dir = shard_subdir_for(accession, shard_mod)
-            local_tmp = os.path.join(tmp_root, rel_dir, f"{accession}.fasta")
-            local_out = os.path.join(out_root, rel_dir, f"{accession}.sig.zip")
-
-            if os.path.exists(local_out):
-                try:
-                    with zipfile.ZipFile(local_out):
-                        pass
-                    LOG.debug("Skipping existing output %s", local_out)
-                    self.db.mark_status(file_id, "DONE", out_path=local_out)
-                    continue
-                except zipfile.BadZipFile:
-                    LOG.warning("Removing corrupt output %s", local_out)
+                if os.path.exists(local_out):
                     try:
-                        os.remove(local_out)
-                    except Exception:
-                        pass
+                        with zipfile.ZipFile(local_out):
+                            pass
+                        LOG.debug("Skipping existing output %s", local_out)
+                        self.db.mark_status(file_id, "DONE", out_path=local_out)
+                    except zipfile.BadZipFile:
+                        LOG.warning("Removing corrupt output %s", local_out)
+                        try:
+                            os.remove(local_out)
+                        except Exception:
+                            pass
 
-            tries = 0
-            while tries <= retry_max and not self.stop_flag:
+            if not accession_paths:
+                continue
+
+            try:
+                async with net_sem:
+                    LOG.debug("Downloading batch of %d accessions", len(accession_paths))
+                    paths, sizes, missing = await download_accessions(
+                        session,
+                        accession_paths,
+                        rate,
+                        api_key,
+                        timeout=timeout,
+                        email=email,
+                    )
+            except RateLimitError as exc:
+                LOG.warning("Rate limit hit for batch (size %d): %s", len(accession_paths), exc)
+                for file_id, _, _, _ in claims:
+                    self.db.mark_status(file_id, "ERROR", error=str(exc), inc_tries=True)
+                    if self.db.get_tries(file_id) >= retry_max:
+                        self.db.mark_status(file_id, "FAILED", error=str(exc))
+                await asyncio.sleep(5)
+                continue
+            except Exception as exc:
+                LOG.exception("Error downloading batch")
+                for file_id, _, _, _ in claims:
+                    self.db.mark_status(file_id, "ERROR", error=str(exc), inc_tries=True)
+                    if self.db.get_tries(file_id) >= retry_max:
+                        self.db.mark_status(file_id, "FAILED", error=str(exc))
+                await asyncio.sleep(2)
+                continue
+
+            id_by_accession = {acc: fid for fid, _, acc, _ in claims}
+            for accession, reason in missing.items():
+                file_id = id_by_accession.get(accession)
+                if file_id is None:
+                    continue
+                self.db.update_size(file_id, sizes.get(accession, 0))
+                self.db.mark_status(file_id, "EMPTY", error=reason)
+
+            for accession, local_tmp in paths.items():
+                file_id = id_by_accession.get(accession)
+                if file_id is None:
+                    continue
+                rel_dir = shard_subdir_for(accession, shard_mod)
+                local_out = os.path.join(out_root, rel_dir, f"{accession}.sig.zip")
+                self.db.update_size(file_id, sizes.get(accession, 0))
                 try:
-                    async with net_sem:
-                        LOG.debug("Downloading %s", accession)
-                        size_bytes = await download_accession(
-                            session,
-                            accession,
-                            local_tmp,
-                            rate,
-                            api_key,
-                            timeout=timeout,
-                            email=email,
-                        )
-                    self.db.update_size(file_id, size_bytes)
                     self.db.mark_status(file_id, "SKETCHING")
                     LOG.debug("Sketching %s", local_tmp)
                     if not os.path.exists(local_tmp):
@@ -129,45 +162,17 @@ class Sketcher:
                         raise RuntimeError(f"sourmash failed rc={rc} for {local_tmp}")
                     self.db.mark_status(file_id, "DONE", out_path=local_out)
                     LOG.info("Finished %s", accession)
-                    try:
-                        os.remove(local_tmp)
-                    except FileNotFoundError:
-                        pass
-                    break
-                except EmptyResultError as exc:
-                    LOG.info("Empty result for %s: %s", accession, exc)
-                    self.db.update_size(file_id, exc.size)
-                    self.db.mark_status(file_id, "EMPTY", error=str(exc))
-                    try:
-                        if os.path.exists(local_tmp):
-                            os.remove(local_tmp)
-                        if os.path.exists(local_out):
-                            os.remove(local_out)
-                    except Exception:
-                        pass
-                    break
-                except RateLimitError as exc:
-                    tries += 1
-                    LOG.warning("Rate limit hit for %s (attempt %d/%d): %s", accession, tries, retry_max, exc)
-                    self.db.mark_status(file_id, "ERROR", error=str(exc), inc_tries=True)
-                    await asyncio.sleep(5 + tries * 2)
                 except Exception as exc:
-                    tries += 1
-                    LOG.exception("Error processing %s (attempt %d/%d)", accession, tries, retry_max)
+                    LOG.exception("Error processing %s", accession)
                     self.db.mark_status(file_id, "ERROR", error=str(exc), inc_tries=True)
-                    backoff = min(300, (2 ** tries))
-                    await asyncio.sleep(backoff)
+                    if self.db.get_tries(file_id) >= retry_max:
+                        self.db.mark_status(file_id, "FAILED", error=str(exc))
+                finally:
                     try:
                         if os.path.exists(local_tmp):
                             os.remove(local_tmp)
-                        if os.path.exists(local_out):
-                            os.remove(local_out)
                     except Exception:
                         pass
-                    if tries >= retry_max:
-                        self.db.mark_status(file_id, "FAILED", error=str(exc))
-            else:
-                LOG.error("Exhausted retries for %s", accession)
 
     async def run(self):
         for p in (
@@ -266,6 +271,7 @@ def load_config(path: str) -> dict:
     cfg.setdefault("sourmash_threads", 1)
     cfg.setdefault("request_timeout_seconds", 3600)
     cfg.setdefault("max_retries", 8)
+    cfg.setdefault("batch_size", 1)
     cfg.setdefault("shard_modulus", 512)
     cfg.setdefault("log_level", "INFO")
     cfg.setdefault("ncbi_api_key", None)
