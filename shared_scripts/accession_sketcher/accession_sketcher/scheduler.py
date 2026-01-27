@@ -42,17 +42,23 @@ class Sketcher:
     async def enqueue_accessions(self):
         dry_run = bool(self.cfg.get("dry_run", False))
         accessions = self._load_accessions()
+        if dry_run:
+            for acc in accessions:
+                LOG.info("Would enqueue %s", acc)
+            LOG.info("Loaded %d accessions (dry run)", len(accessions))
+            return
+
+        existing = self.db.existing_filenames(accessions)
         count = 0
         for acc in accessions:
+            if acc in existing:
+                continue
             url = f"nuccore:{acc}"
-            if dry_run:
-                LOG.info("Would enqueue %s", acc)
-            else:
-                self.db.upsert_file("nuccore", acc, url, None, None)
+            self.db.upsert_file("nuccore", acc, url, None, None)
             count += 1
             if count % 1000 == 0:
-                LOG.info("Enqueued %d accessions so far", count)
-        LOG.info("Loaded %d accessions", count)
+                LOG.info("Enqueued %d new accessions so far", count)
+        LOG.info("Loaded %d accessions (%d new, %d already present)", len(accessions), count, len(existing))
 
     async def worker(self, session: aiohttp.ClientSession, net_sem: asyncio.Semaphore, rate: RequestRateLimiter):
         params = self.cfg.get("sourmash_params", DEFAULT_PARAMS)

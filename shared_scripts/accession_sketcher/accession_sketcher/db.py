@@ -200,6 +200,21 @@ class DB:
             row = cur.fetchone()
             return int(row[0]) if row else 0
 
+    def existing_filenames(self, filenames: List[str]) -> set[str]:
+        if not filenames:
+            return set()
+        existing: set[str] = set()
+        with self._lock:
+            for i in range(0, len(filenames), 999):
+                chunk = filenames[i:i + 999]
+                placeholders = ",".join("?" for _ in chunk)
+                cur = self.conn.execute(
+                    f"SELECT filename FROM files WHERE filename IN ({placeholders})",
+                    chunk,
+                )
+                existing.update(row[0] for row in cur.fetchall())
+        return existing
+
     def stats(self) -> Dict[str, Any]:
         with self._lock:
             cur = self.conn.execute("SELECT status, COUNT(*) FROM files GROUP BY status")
